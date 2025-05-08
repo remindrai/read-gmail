@@ -33,26 +33,49 @@ const GoogleLoginButton: React.FC = () => {
   const [order, setOrder] = useState<Order>('asc');
   const [orderBy, setOrderBy] = useState<keyof GmailMessage>('snippet');
 
+  function parseJwt(token: string) {
+    try {
+      return JSON.parse(atob(token.split('.')[1]));
+    } catch (e) {
+      return {};
+    }
+  }
+
   // Use the useGoogleLogin hook for OAuth with scopes
   const login = useGoogleLogin({
     onSuccess: async (tokenResponse) => {
       setToken(tokenResponse.access_token);
-      // Fetch user info from Google People API
+      // Try People API first
       try {
-        const res = await fetch('https://people.googleapis.com/v1/people/me?personFields=names,emailAddresses,photos', {
-          headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+        const res = await fetch('https://people.googleapis.com/v1/people/me?personFields=names,emailAddresses', {
+          headers: { Authorization: `Bearer ${tokenResponse.access_token}` }
         });
         const data = await res.json();
-        setUser({
-          name: data.names?.[0]?.displayName || 'Google User',
-          email: data.emailAddresses?.[0]?.value || '',
-          picture: data.photos?.[0]?.url || undefined,
-        });
-      } catch {
-        setUser({ name: 'Google User', email: '' });
+        if (data.names && data.emailAddresses) {
+          setUser({
+            name: data.names[0].displayName,
+            email: data.emailAddresses[0].value,
+            picture: undefined,
+          });
+          return;
+        }
+      } catch (e) {
+        // fallback below
       }
+      // Fallback: Try to decode id_token if available
+      if ((tokenResponse as any).id_token) {
+        const decoded = parseJwt((tokenResponse as any).id_token);
+        setUser({
+          name: decoded.name,
+          email: decoded.email,
+          picture: decoded.picture
+        });
+        return;
+      }
+      // If all else fails
+      setUser({ name: 'Unknown User', email: '' });
     },
-    scope: 'https://www.googleapis.com/auth/gmail.readonly profile email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
+    scope: 'openid email profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/gmail.readonly',
     flow: 'implicit',
   });
 
@@ -189,8 +212,10 @@ const GoogleLoginButton: React.FC = () => {
       {user ? (
         <Box display="flex" flexDirection="column" alignItems="center" gap={2}>
           <Avatar src={user.picture} alt={user.name} sx={{ width: 64, height: 64 }} />
-          <Typography variant="h6">{user.name}</Typography>
-          <Typography variant="body2" color="text.secondary">{user.email}</Typography>
+          <Typography variant="h6" sx={{ fontWeight: 600 }}>{user.name}</Typography>
+          {user.email && (
+            <Typography variant="body2" color="primary" sx={{ fontWeight: 500, mb: 1 }}>{user.email}</Typography>
+          )}
           <Button variant="outlined" color="secondary" onClick={handleLogout}>
             Logout
           </Button>
@@ -203,6 +228,9 @@ const GoogleLoginButton: React.FC = () => {
               onKeyDown={e => { if (e.key === 'Enter') handleSearch(); }}
               disabled={loading}
             />
+            <Typography variant="caption" sx={{ display: 'block', mt: 1, fontWeight: 700, color: 'orange' }}>
+              Enter keywords to search your Gmail messages (e.g., subject, sender, or content).
+            </Typography>
             <Button
               variant="contained"
               color="primary"
